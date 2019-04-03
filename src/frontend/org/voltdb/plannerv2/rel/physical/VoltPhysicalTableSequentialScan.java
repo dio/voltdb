@@ -44,19 +44,12 @@ import java.util.List;
  * @author Michael Alexeev
  * @since 9.0
  */
-public class VoltSeqTableScan extends VoltPhysicalTableScan {
+public class VoltPhysicalTableSequentialScan extends VoltPhysicalTableScan {
 
-    public VoltSeqTableScan(RelOptCluster cluster,
-                               RelTraitSet traitSet,
-                               RelOptTable table,
-                               VoltTable voltTable,
-                               RexProgram program,
-                               RexNode offset,
-                               RexNode limit,
-                               RelNode aggregate,
-                               RelDataType preAggregateRowType,
-                               RexProgram preAggregateProgram,
-                               int splitCount) {
+    public VoltPhysicalTableSequentialScan(
+            RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table, VoltTable voltTable,
+            RexProgram program, RexNode offset, RexNode limit, RelNode aggregate,
+            RelDataType preAggregateRowType, RexProgram preAggregateProgram, int splitCount) {
         super(cluster,
                 traitSet,
                 table,
@@ -70,11 +63,8 @@ public class VoltSeqTableScan extends VoltPhysicalTableScan {
                 splitCount);
     }
 
-    public VoltSeqTableScan(RelOptCluster cluster,
-                               RelTraitSet traitSet,
-                               RelOptTable table,
-                               VoltTable voltTable,
-                               int splitCount) {
+    public VoltPhysicalTableSequentialScan(
+            RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table, VoltTable voltTable, int splitCount) {
         this(cluster,
                 traitSet,
                 table,
@@ -104,7 +94,7 @@ public class VoltSeqTableScan extends VoltPhysicalTableScan {
 
     @Override
     public AbstractVoltTableScan copyWithLimitOffset(RelTraitSet traitSet, RexNode offset, RexNode limit) {
-        VoltSeqTableScan newScan = new VoltSeqTableScan(
+        VoltPhysicalTableSequentialScan newScan = new VoltPhysicalTableSequentialScan(
                 getCluster(),
                 traitSet,
                 getTable(),
@@ -127,7 +117,7 @@ public class VoltSeqTableScan extends VoltPhysicalTableScan {
                 m_program,
                 programRexBuilder);
 
-        VoltSeqTableScan newScan = new VoltSeqTableScan(
+        VoltPhysicalTableSequentialScan newScan = new VoltPhysicalTableSequentialScan(
                 getCluster(),
                 traitSet,
                 getTable(),
@@ -150,7 +140,7 @@ public class VoltSeqTableScan extends VoltPhysicalTableScan {
         RexProgram aggProgram = RexProgram.createIdentity(aggregate.getRowType());
         RelDataType preAggRowType = getRowType();
         RexProgram preAggProgram = getProgram();
-        VoltSeqTableScan newScan = new VoltSeqTableScan(
+        VoltPhysicalTableSequentialScan newScan = new VoltPhysicalTableSequentialScan(
                 getCluster(),
                 traitSet,
                 getTable(),

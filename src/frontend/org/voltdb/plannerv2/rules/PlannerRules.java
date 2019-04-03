@@ -50,13 +50,7 @@ import org.voltdb.plannerv2.rules.logical.VoltLJoinRule;
 import org.voltdb.plannerv2.rules.logical.VoltLSetOpsRule;
 import org.voltdb.plannerv2.rules.logical.VoltLSortRule;
 import org.voltdb.plannerv2.rules.logical.VoltLTableScanRule;
-import org.voltdb.plannerv2.rules.physical.VoltPAggregateRule;
-import org.voltdb.plannerv2.rules.physical.VoltPCalcRule;
-import org.voltdb.plannerv2.rules.physical.VoltPJoinRule;
-import org.voltdb.plannerv2.rules.physical.VoltPLimitRule;
-import org.voltdb.plannerv2.rules.physical.VoltPSeqScanRule;
-import org.voltdb.plannerv2.rules.physical.VoltPSetOpsRule;
-import org.voltdb.plannerv2.rules.physical.VoltPSortConvertRule;
+import org.voltdb.plannerv2.rules.physical.*;
 
 /**
  * Rules used by the VoltDB query planner in various planning stages.
@@ -179,6 +173,11 @@ public class PlannerRules {
             VoltPLimitRule.INSTANCE,
             VoltPAggregateRule.INSTANCE,
             VoltPJoinRule.INSTANCE,
+            VoltPSortScanToIndexRule.INSTANCE_1,
+            VoltPSortScanToIndexRule.INSTANCE_2,
+            VoltPCalcScanToIndexRule.INSTANCE,
+            VoltPSortIndexScanRemoveRule.INSTANCE_1,
+            VoltPSortIndexScanRemoveRule.INSTANCE_2,
             VoltPSetOpsRule.INSTANCE_UNION,
             VoltPSetOpsRule.INSTANCE_INTERSECT,
             VoltPSetOpsRule.INSTANCE_EXCEPT
