@@ -17,18 +17,16 @@
 
 package org.voltdb.plannerv2.utils;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.json_voltpatches.JSONException;
 import org.voltdb.catalog.Column;
-import org.voltdb.catalog.ColumnRef;
 import org.voltdb.catalog.Index;
 import org.voltdb.catalog.Table;
 import org.voltdb.expressions.AbstractExpression;
@@ -84,31 +82,23 @@ public class IndexUtil {
      *
      * @return A valid access path using the data or null if none found.
      */
-    static AccessPath getCalciteRelevantAccessPathForIndex(Table table,
-            List<Column> catColumns,
-            RexNode condRef,
-            RexProgram program,
-            Index index,
-            SortDirectionType sortDirection,
-            int numLhsFieldsForJoin) {
+    static AccessPath getCalciteRelevantAccessPathForIndex(
+            Table table, List<Column> catColumns, RexNode condRef, RexProgram program,
+            Index index, SortDirectionType sortDirection, int numOuterFieldsForJoin) {
         // Get filter condition or NULL
-        if (condRef == null) {
-            // No filters to pick an index
+        if (condRef == null) { // No filters to pick an index
             return null;
+        } else { // Convert Calcite expressions to VoltDB ones
+            final Collection<AbstractExpression> voltSubExprs = ExpressionUtil.uncombineAny(
+                    RexConverter.convertRefExpression(condRef, table.getTypeName(), catColumns,
+                            program, numOuterFieldsForJoin));
+            final StmtTableScan tableScan = new StmtTargetTableScan(table, table.getTypeName(), 0);
+            // Partial Index Check
+            return SubPlanAssembler.processPartialIndex(index, tableScan,
+                    SubPlanAssembler.getRelevantAccessPathForIndexForCalcite(
+                            tableScan, voltSubExprs, index, sortDirection),
+                    voltSubExprs, null, null);
         }
-
-        // Convert Calcite expressions to VoltDB ones
-        AbstractExpression voltExpr = RexConverter.convertRefExpression(
-                condRef, table.getTypeName(), catColumns, program, numLhsFieldsForJoin);
-        Collection<AbstractExpression> voltSubExprs = ExpressionUtil.uncombineAny(voltExpr);
-
-        StmtTableScan tableScan = new StmtTargetTableScan(table, table.getTypeName(), 0);
-        AccessPath accessPath = SubPlanAssembler.getRelevantAccessPathForIndexForCalcite(
-                tableScan, voltSubExprs, index, sortDirection);
-
-        // Partial Index Check
-        accessPath = SubPlanAssembler.processPartialIndex(index, tableScan, accessPath, voltSubExprs, null, null);
-        return accessPath;
     }
 
     /**
@@ -129,49 +119,31 @@ public class IndexUtil {
      * @param index
      * @return Pair<List<AbstractExpression>, List<Integer>>
      */
-    public static List<RelFieldCollation> getIndexCollationFields(Table catTable, Index index, RexProgram program) {
-        String exprsjson = index.getExpressionsjson();
-        List<RelFieldCollation> collationsList = new ArrayList<>();
-        if (exprsjson.isEmpty()) {
-            List<ColumnRef> indexedColRefs = CatalogUtil.getSortedCatalogItems(index.getColumns(), "index");
-            for (ColumnRef cr : indexedColRefs) {
-                collationsList.add(new RelFieldCollation(cr.getColumn().getIndex()));
-            }
+    public static List<RelFieldCollation> getIndexCollationFields(Table table, Index index, RexProgram program)
+            throws JSONException {
+        final String json = index.getExpressionsjson();
+        if (json.isEmpty()) {
+            return CatalogUtil.getSortedCatalogItems(index.getColumns(), "index")
+                    .stream().map(cr -> new RelFieldCollation(cr.getColumn().getIndex()))
+                    .collect(Collectors.toList());
         } else {
-            try {
-                StmtTableScan tableScan = new StmtTargetTableScan(catTable, catTable.getTypeName(), 0);
-                List<Column> columns = CatalogUtil.getSortedCatalogItems(catTable.getColumns(), "index");
-                // Convert each Calcite expression from Program to a VoltDB one and keep track of its index
-                Map<AbstractExpression, Integer> convertedProgExprs = new HashMap<>();
-                int exprIdx = 0;
-                for (RexNode expr : program.getExprList()) {
-                    AbstractExpression convertedExpr = RexConverter.convertRefExpression(
-                            expr,
-                            tableScan.getTableName(),
-                            columns,
-                            program,
-                            -1);
-                    convertedProgExprs.put(convertedExpr, exprIdx++);
-                }
-
-                // Build a collation based on index expressions
-                List<AbstractExpression> indexedExprs = AbstractExpression.fromJSONArrayString(exprsjson, tableScan);
-                for (AbstractExpression indexExpr : indexedExprs) {
-                    Integer indexExprIdx = convertedProgExprs.get(indexExpr);
-                    if (indexExprIdx != null) {
-                        collationsList.add(new RelFieldCollation(indexExprIdx));
-                    } else {
-                        // Break on a first mismatch.
-                        break;
-                    }
-                }
-            } catch (JSONException e) {
-                e.printStackTrace();
-                assert(false);
-                return null;
-            }
+            final StmtTableScan tableScan = new StmtTargetTableScan(table, table.getTypeName(), 0);
+            final List<Column> columns = CatalogUtil.getSortedCatalogItems(table.getColumns(), "index");
+            // Convert each Calcite expression from Program to a VoltDB one and keep track of its index
+            final AtomicInteger exprIndex = new AtomicInteger(0);
+            final Map<AbstractExpression, Integer> convertedProgExprs = program.getExprList().stream()
+                    .map(expr -> new AbstractMap.SimpleEntry<>(
+                            RexConverter.convertRefExpression(
+                                    expr, tableScan.getTableName(), columns, program, -1),
+                            exprIndex.getAndIncrement()))
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b)-> b));
+            // Build a collation based on index expressions
+            return AbstractExpression.fromJSONArrayString(json, tableScan).stream()
+                    .flatMap(expr -> {
+                        final Integer indexExprIdx = convertedProgExprs.get(expr);
+                        return indexExprIdx == null ? Stream.empty() : Stream.of(new RelFieldCollation(indexExprIdx));
+                    }).collect(Collectors.toList());
         }
-        return collationsList;
     }
 
 }

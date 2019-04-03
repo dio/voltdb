@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.google_voltpatches.common.base.Preconditions;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelTraitSet;
@@ -30,6 +31,7 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
+import org.json_voltpatches.JSONException;
 import org.voltdb.catalog.Column;
 import org.voltdb.catalog.Index;
 import org.voltdb.catalog.Table;
@@ -90,15 +92,17 @@ public class VoltPCalcScanToIndexRule extends RelOptRule {
             if (accessPath != null) {
                 // if accessPath.other is not null, need to create a new Filter
                 // @TODO Adjust Calc program Condition based on the access path "other" filters
-                RelCollation indexCollation = VoltRexUtil.createIndexCollation(
-                        index,
-                        catTableable,
-                        rexBuilder,
-                        mergedProgram);
-                RelTraitSet scanTraits = scan.getTraitSet();
-                VoltPhysicalTableIndexScan nextIndexScan = new VoltPhysicalTableIndexScan(
+                RelCollation indexCollation;
+                try {
+                    indexCollation = VoltRexUtil.createIndexCollation(
+                            index, catTableable, rexBuilder, mergedProgram);
+                } catch (JSONException e) {
+                    indexCollation = null;
+                }
+                Preconditions.checkNotNull(indexCollation);
+                final RelNode nextIndexScan = new VoltPhysicalTableIndexScan(
                         scan.getCluster(),
-                        scanTraits,
+                        scan.getTraitSet(),
                         scan.getTable(),
                         scan.getVoltTable(),
                         mergedProgram,

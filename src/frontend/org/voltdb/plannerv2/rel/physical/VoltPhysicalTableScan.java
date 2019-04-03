@@ -89,17 +89,10 @@ public abstract class VoltPhysicalTableScan extends AbstractVoltTableScan implem
      * @param preAggregateProgram The program before aggregation
      * @param splitCount Number of concurrent processes that this relational expression will be executed in
      */
-    protected VoltPhysicalTableScan(RelOptCluster cluster,
-                                       RelTraitSet traitSet,
-                                       RelOptTable table,
-                                       VoltTable voltDBTable,
-                                       RexProgram program,
-                                       RexNode offset,
-                                       RexNode limit,
-                                       RelNode aggregate,
-                                       RelDataType preAggregateRowType,
-                                       RexProgram preAggregateProgram,
-                                       int splitCount) {
+    protected VoltPhysicalTableScan(
+            RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table, VoltTable voltDBTable, RexProgram program,
+            RexNode offset, RexNode limit, RelNode aggregate, RelDataType preAggregateRowType, RexProgram preAggregateProgram,
+            int splitCount) {
         super(cluster, traitSet.plus(VoltPhysicalRel.CONVENTION), table, voltDBTable);
         Preconditions.checkNotNull(program);
         Preconditions.checkArgument(aggregate == null || aggregate instanceof AbstractVoltPhysicalAggregate);
@@ -132,10 +125,10 @@ public abstract class VoltPhysicalTableScan extends AbstractVoltTableScan implem
             dg += "_program_" + m_program.toString();
         }
         if (m_limit != null) {
-            dg += "_limit_" + Integer.toString(getLimit());
+            dg += "_limit_" + getLimit();
         }
         if (m_offset != null) {
-            dg += "_offset_" + Integer.toString(getOffset());
+            dg += "_offset_" + getOffset();
         }
         if (m_aggregate != null) {
             dg += "_aggr_" + m_aggregate.getDigest();
@@ -367,8 +360,7 @@ public abstract class VoltPhysicalTableScan extends AbstractVoltTableScan implem
      */
     protected AbstractPlanNode addAggregate(AbstractPlanNode node) {
         if (m_aggregate != null) {
-
-            assert (m_preAggregateRowType != null);
+            Preconditions.checkNotNull(m_preAggregateRowType);
             AbstractPlanNode aggr = ((AbstractVoltPhysicalAggregate) m_aggregate).toPlanNode(m_preAggregateRowType);
             aggr.clearChildren();
             node.addInlinePlanNode(aggr);

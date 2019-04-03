@@ -960,10 +960,10 @@ public abstract class SubPlanAssembler {
         }
 
         // Copy the expressions to a new working list that can be culled as filters are processed.
-        List<AbstractExpression> filtersToCover = new ArrayList<>(exprs);
+        final List<AbstractExpression> filtersToCover = new ArrayList<>(exprs);
 
-        boolean indexIsGeographical;
-        String exprsjson = index.getExpressionsjson();
+        final boolean indexIsGeographical;
+        final String exprsjson = index.getExpressionsjson();
         // This list remains null if the index is just on simple columns.
         List<AbstractExpression> indexedExprs = null;
         // This vector of indexed columns remains null if indexedExprs is in use.
@@ -996,7 +996,7 @@ public abstract class SubPlanAssembler {
             indexIsGeographical = SubPlanAssembler.isAGeoExpressionIndex(indexedExprs);
         }
 
-        AccessPath retval = new AccessPath();
+        final AccessPath retval = new AccessPath();
         retval.index = index;
         retval.sortDirection = sortDirection;
 
@@ -1010,7 +1010,7 @@ public abstract class SubPlanAssembler {
         // Use as many covering indexed expressions as possible to optimize comparator expressions that can use them.
 
         // Start with equality comparisons on as many (prefix) indexed expressions as possible.
-        int coveredCount = 0;
+        int coveredCount;
         // If determineIndexOrdering found one or more spoilers,
         // index key components that might interfere with the desired ordering of the result,
         // their ill effects are eliminated when they are constrained to be equal to constants.
@@ -1023,7 +1023,6 @@ public abstract class SubPlanAssembler {
         // nRecoveredSpoilers in comparison to nSpoilers may indicate remaining unrecovered spoilers.
         // That edge case motivates a renewed search for (non-prefix) equality filters solely for the purpose
         // of recovering the spoilers and confirming the relevance of the result's index ordering.
-        int nRecoveredSpoilers = 0;
         AbstractExpression coveringExpr = null;
         int coveringColId = -1;
 
@@ -1036,20 +1035,19 @@ public abstract class SubPlanAssembler {
         // the index scan.
         IndexableExpression inListExpr = null;
 
-        for ( ; (coveredCount < keyComponentCount) && ! filtersToCover.isEmpty(); ++coveredCount) {
+        for (coveredCount = 0; coveredCount < keyComponentCount && ! filtersToCover.isEmpty(); ++coveredCount) {
             if (indexedExprs == null) {
                 coveringColId = indexedColIds[coveredCount];
             } else {
                 coveringExpr = indexedExprs.get(coveredCount);
             }
             // Equality filters get first priority.
-            boolean allowIndexedJoinFilters = (inListExpr == null);
             IndexableExpression eqExpr = getIndexableExpressionFromFilters(
                     // NOT DISTINCT can be also considered as an equality comparison.
                     // The only difference is that NULL is not distinct from NULL, but NULL != NULL. (ENG-11096)
                     ExpressionType.COMPARE_EQUAL, ExpressionType.COMPARE_NOTDISTINCT,
                     coveringExpr, coveringColId, tableScan, filtersToCover,
-                    allowIndexedJoinFilters, EXCLUDE_FROM_POST_FILTERS);
+                    inListExpr == null, EXCLUDE_FROM_POST_FILTERS);
 
             if (eqExpr == null) {
                 // For now, an IN LIST can only be indexed if any other indexed filters are based
@@ -1145,7 +1143,7 @@ public abstract class SubPlanAssembler {
                 startingBoundExpr = doubleBoundExpr.extractStartFromPrefixLike();
                 endingBoundExpr = doubleBoundExpr.extractEndFromPrefixLike();
             } else {
-                boolean allowIndexedJoinFilters = (inListExpr == null);
+                final boolean allowIndexedJoinFilters = inListExpr == null;
 
                 // Look for a lower bound.
                 startingBoundExpr = getIndexableExpressionFromFilters(
@@ -1166,8 +1164,7 @@ public abstract class SubPlanAssembler {
                 retval.bindings.addAll(startingBoundExpr.getBindings());
                 if (lowerBoundExpr.getExpressionType() == ExpressionType.COMPARE_GREATERTHAN) {
                     retval.lookupType = IndexLookupType.GT;
-                }
-                else {
+                } else {
                     assert(lowerBoundExpr.getExpressionType() == ExpressionType.COMPARE_GREATERTHANOREQUALTO);
                     retval.lookupType = IndexLookupType.GTE;
                 }
@@ -1187,16 +1184,21 @@ public abstract class SubPlanAssembler {
                     if (retval.lookupType == IndexLookupType.EQ) {
                         retval.lookupType = IndexLookupType.GTE;
                     }
-                }
-                else {
+                } else {
                     // Optimizable to use reverse scan.
                     // only do reverse scan optimization when no lowerBoundExpr and lookup type is either < or <=.
-                    if (upperBoundComparator.getExpressionType() == ExpressionType.COMPARE_LESSTHAN) {
-                        retval.lookupType = IndexLookupType.LT;
-                    }
-                    else {
-                        assert upperBoundComparator.getExpressionType() == ExpressionType.COMPARE_LESSTHANOREQUALTO;
-                        retval.lookupType = IndexLookupType.LTE;
+                    assert upperBoundComparator.getExpressionType() == ExpressionType.COMPARE_LESSTHAN ||
+                            upperBoundComparator.getExpressionType() == ExpressionType.COMPARE_LESSTHANOREQUALTO;
+                    switch (upperBoundComparator.getExpressionType()) {
+                        case COMPARE_LESSTHAN:
+                            retval.lookupType = IndexLookupType.LT;
+                            break;
+                        case COMPARE_LESSTHANOREQUALTO:
+                            retval.lookupType = IndexLookupType.LTE;
+                            break;
+                        default:
+                            throw new PlanningErrorException(String.format("Unsupported index expression type: %s",
+                                    upperBoundComparator.getExpressionType().toString()));
                     }
                     // Unlike a lower bound, an upper bound does not automatically filter out nulls
                     // as required by the comparison filter, so construct a NOT NULL comparator and
@@ -1204,16 +1206,14 @@ public abstract class SubPlanAssembler {
                     // TODO: Implement an abstract isNullable() method on AbstractExpression and use
                     // that here to optimize out the "NOT NULL" comparator for NOT NULL columns
                     if (startingBoundExpr == null) {
-                        AbstractExpression newComparator = new OperatorExpression(ExpressionType.OPERATOR_NOT,
+                        final AbstractExpression newComparator = new OperatorExpression(
+                                ExpressionType.OPERATOR_NOT,
                                 new OperatorExpression(ExpressionType.OPERATOR_IS_NULL), null);
                         newComparator.getLeft().setLeft(upperBoundComparator.getLeft());
                         newComparator.finalizeValueTypes();
                         retval.otherExprs.add(newComparator);
-                    }
-                    else {
-                        int lastIdx = retval.indexExprs.size() -1;
-                        retval.indexExprs.remove(lastIdx);
-
+                    } else {
+                        retval.indexExprs.remove(retval.indexExprs.size() -1);
                         AbstractExpression lowerBoundComparator = startingBoundExpr.getFilter();
                         retval.endExprs.add(lowerBoundComparator);
                     }
@@ -1233,7 +1233,7 @@ public abstract class SubPlanAssembler {
         if (endingBoundExpr == null) {
             if (retval.sortDirection == SortDirectionType.DESC) {
                 // Optimizable to use reverse scan.
-                if (retval.endExprs.size() == 0) { // no prefix equality filters
+                if (retval.endExprs.isEmpty()) { // no prefix equality filters
                     if (startingBoundExpr != null) {
                         retval.indexExprs.clear();
                         AbstractExpression comparator = startingBoundExpr.getFilter();
@@ -1253,24 +1253,22 @@ public abstract class SubPlanAssembler {
         }
 
         // index not relevant to expression
-        if (retval.indexExprs.size() == 0 &&
-                retval.endExprs.size() == 0 &&
+        if (retval.indexExprs.size() == 0 && retval.endExprs.size() == 0 &&
                 retval.sortDirection == SortDirectionType.INVALID) {
             return null;
+        } else {
+            // If all of the index key components are not covered by comparisons
+            // (but SOME are), then the scan may need to be reconfigured to account
+            // for the scan key being padded in the EE with null values for the
+            // components that are not being filtered.
+            if (retval.indexExprs.size() < keyComponentCount) {
+                correctAccessPathForPrefixKeyCoverage(retval, startingBoundExpr);
+            }
+            // All remaining filters get applied as post-filters
+            // on tuples fetched from the index.
+            retval.otherExprs.addAll(filtersToCover);
+            return retval;
         }
-
-        // If all of the index key components are not covered by comparisons
-        // (but SOME are), then the scan may need to be reconfigured to account
-        // for the scan key being padded in the EE with null values for the
-        // components that are not being filtered.
-        if (retval.indexExprs.size() < keyComponentCount) {
-            correctAccessPathForPrefixKeyCoverage(retval, startingBoundExpr);
-        }
-
-        // All remaining filters get applied as post-filters
-        // on tuples fetched from the index.
-        retval.otherExprs.addAll(filtersToCover);
-        return retval;
     }
 
         private static AccessPath finalizeAccessPath(

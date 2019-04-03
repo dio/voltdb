@@ -29,6 +29,7 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.util.Pair;
+import org.json_voltpatches.JSONException;
 import org.voltdb.catalog.Index;
 import org.voltdb.catalog.Table;
 import org.voltdb.expressions.AbstractExpression;
@@ -40,6 +41,7 @@ import org.voltdb.types.SortDirectionType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class VoltRexUtil {
     private VoltRexUtil() {}
@@ -52,17 +54,13 @@ public class VoltRexUtil {
      * @return
      */
     public static OrderByPlanNode collationToOrderByNode(RelCollation collation, List<RexNode> collationFieldExps) {
-        Preconditions.checkNotNull(collation);
-        OrderByPlanNode opn = new OrderByPlanNode();
-
+        Preconditions.checkNotNull("Null collation", collation);
         // Convert ORDER BY Calcite expressions to VoltDB
-        List<AbstractExpression> voltExprList = new ArrayList<>();
-        for (RexNode expr : collationFieldExps) {
-            AbstractExpression voltExpr = RexConverter.convert(expr);
-            voltExprList.add(voltExpr);
-        }
-        List<Pair<Integer, SortDirectionType>> collFields = convertCollation(collation);
+        final List<AbstractExpression> voltExprList = collationFieldExps.stream()
+                .map(RexConverter::convert).collect(Collectors.toList());
+        final List<Pair<Integer, SortDirectionType>> collFields = convertCollation(collation);
         Preconditions.checkArgument(voltExprList.size() == collFields.size());
+        final OrderByPlanNode opn = new OrderByPlanNode();
         int index = 0;
         for (Pair<Integer, SortDirectionType> collField : collFields) {
             opn.getSortExpressions().add(voltExprList.get(index++));
@@ -81,24 +79,17 @@ public class VoltRexUtil {
      * @return
      */
     public static RelCollation createIndexCollation(
-            Index index,
-            Table catTable,
-            RexBuilder builder,
-            RexProgram program) {
-
-        RelCollation outputCollation = RelCollations.EMPTY;
-
+            Index index, Table catTable, RexBuilder builder, RexProgram program) throws JSONException {
         if (IndexType.isScannable(index.getType())) {
-            List<RelFieldCollation> indexCollationFields = IndexUtil
-                    .getIndexCollationFields(catTable, index, program);
+            final List<RelFieldCollation> indexCollationFields =
+                    IndexUtil.getIndexCollationFields(catTable, index, program);
 
-            RelCollation indexCollation = RelCollations
-                    .of(indexCollationFields);
+            RelCollation indexCollation = RelCollations.of(indexCollationFields);
             // Convert index collation to take the program into an account
-            outputCollation = VoltRexUtil.adjustCollationForProgram(builder, program,
-                    indexCollation);
+            return VoltRexUtil.adjustCollationForProgram(builder, program, indexCollation);
+        } else {
+            return RelCollations.EMPTY;
         }
-        return outputCollation;
     }
 
 

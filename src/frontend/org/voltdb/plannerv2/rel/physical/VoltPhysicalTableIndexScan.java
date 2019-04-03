@@ -17,6 +17,7 @@
 
 package org.voltdb.plannerv2.rel.physical;
 
+import com.google_voltpatches.common.base.Preconditions;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
@@ -33,7 +34,6 @@ import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
 import org.voltdb.catalog.Index;
 import org.voltdb.planner.AccessPath;
-import org.voltdb.planner.parseinfo.StmtTableScan;
 import org.voltdb.planner.parseinfo.StmtTargetTableScan;
 import org.voltdb.plannerv2.converter.RexConverter;
 import org.voltdb.plannerv2.VoltTable;
@@ -73,12 +73,21 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
             RelCollation indexCollation) {
         super(cluster, traitSet, table, voltDBTable, updateProgram(program, accessPath),
               offset, limit, aggregate, preAggregateRowType, preAggregateProgram, splitCount);
-        assert (index != null);
+        Preconditions.checkNotNull(index, "index is null");
+        Preconditions.checkNotNull(accessPath, "access path is null");
+        Preconditions.checkNotNull(indexCollation, "index collation is null");
         m_index = index;
-        assert (accessPath != null);
         m_accessPath = accessPath;
-        assert (indexCollation != null);
         m_indexCollation = indexCollation;
+    }
+
+    private String explain() {
+        // Need to differentiate between the same index chosen for ORDER_BY or search purposes
+        return m_index.getTypeName() + "_" +
+                m_accessPath.getSortDirection() +
+                m_accessPath.getIndexLookupType() +
+                m_accessPath.getIndexExpressions().size() + "_" +
+                m_accessPath.getEndExpressions().size();
     }
 
     /**
@@ -87,35 +96,21 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
      */
     @Override
     protected String computeDigest() {
-        String dg = super.computeDigest();
-        // Need to differentiate between the same index chosen for ORDER_BY or search purposes
-        dg += "_index_" + m_index.getTypeName() + "_" +
-                m_accessPath.getSortDirection() +
-                m_accessPath.getIndexLookupType() +
-                m_accessPath.getIndexExpressions().size() + "_" +
-                m_accessPath.getEndExpressions().size();
-        return dg;
+        return super.computeDigest() + "_index_" + explain();
     }
 
     @Override
     public RelWriter explainTerms(RelWriter pw) {
         super.explainTerms(pw);
-        pw.item("index", m_index.getTypeName() + "_" +
-                m_accessPath.getSortDirection() +
-                m_accessPath.getIndexLookupType() +
-                m_accessPath.getIndexExpressions().size() + "_" +
-                m_accessPath.getEndExpressions().size());
+        pw.item("index", explain());
         return pw;
     }
 
     @Override
     public AbstractPlanNode toPlanNode() {
-
-        StmtTableScan tableScan = new StmtTargetTableScan(getVoltTable().getCatalogTable(),
-                getVoltTable().getCatalogTable().getTypeName(), 0);
-
-        IndexScanPlanNode ispn = new IndexScanPlanNode(tableScan, m_index);
-
+        final IndexScanPlanNode ispn = new IndexScanPlanNode(new StmtTargetTableScan(
+                getVoltTable().getCatalogTable(), getVoltTable().getCatalogTable().getTypeName(), 0),
+                m_index);
         // Set limit/offset
         if (m_aggregate == null) {
             // Limit / Offset will be inlined with aggregate node
@@ -175,9 +170,7 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
                 dRows = 4;
             }
         }
-
-        RelOptCost cost = planner.getCostFactory().makeCost(dRows, dCpu, dIo);
-        return cost;
+        return planner.getCostFactory().makeCost(dRows, dCpu, dIo);
     }
 
     @Override
@@ -216,24 +209,21 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
         // Assign minor priorities for different index types (tiebreakers).
         if (m_index.getType() == IndexType.HASH_TABLE.getValue()) {
             tuplesToRead = 2;
-        }
-        else if ((m_index.getType() == IndexType.BALANCED_TREE.getValue()) ||
+        } else if ((m_index.getType() == IndexType.BALANCED_TREE.getValue()) ||
                 (m_index.getType() == IndexType.BTREE.getValue())) {
             tuplesToRead = 3;
-        }
-        else if (m_index.getType() == IndexType.COVERING_CELL_INDEX.getValue()) {
+        } else if (m_index.getType() == IndexType.COVERING_CELL_INDEX.getValue()) {
             // "Covering cell" indexes get further special treatment below that tries to
             // properly credit their benefit even when they do not actually eliminate
             // the expensive exact contains post-filter.
             tuplesToRead = 3;
         }
-        assert(tuplesToRead > 0);
+        Preconditions.checkState(tuplesToRead > 0);
 
         // special case a unique match for the output count
         if (m_index.getUnique() && (colCount == keyWidth)) {
             tuplesToRead = 1;
-        }
-        else {
+        } else {
             // If not a unique, covering index, favor (discount)
             // the choice with the most columns pre-filtered by the index.
             // Cost starts at 90% of a comparable seqscan AND
@@ -270,25 +260,20 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
             }
         }
 
-        double rowCount = estimateRowCountWithPredicate(tuplesToRead);
-        rowCount = estimateRowCountWithLimit(rowCount);
-
         // If table is distributed divide the row count by the split count.
         // The exchange node would combine individual fragments counts into a total.
-        int splitCount = mq.splitCount(this);
-        return rowCount / splitCount;
+        return estimateRowCountWithLimit(estimateRowCountWithPredicate(tuplesToRead)) / mq.splitCount(this);
     }
 
     private double getSearchExpressionKeyWidth(final double colCount) {
         double keyWidth = m_accessPath.getIndexExpressions().size();
-        assert(keyWidth <= colCount);
+        Preconditions.checkState(keyWidth <= colCount);
         // count a range scan as a half covered column
         if (keyWidth > 0.0 &&
                 m_accessPath.getIndexLookupType() != IndexLookupType.EQ &&
                 m_accessPath.getIndexLookupType() != IndexLookupType.GEO_CONTAINS) {
             keyWidth -= 0.5;
-        }
-        else if (keyWidth == 0.0 && !m_accessPath.getIndexExpressions().isEmpty()) {
+        } else if (keyWidth == 0.0 && !m_accessPath.getIndexExpressions().isEmpty()) {
             // When there is no start key, count an end-key as a single-column range scan key.
 
             // TODO: ( (double) ExpressionUtil.uncombineAny(m_endExpression).size() ) - 0.5
@@ -305,37 +290,23 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
      * @return
      */
     private static RexProgram updateProgram(RexProgram program, AccessPath accessPath) {
-        // @TODO eliminate index expresions from the program
+        // @TODO eliminate index expressions from the program
         return program;
     }
 
     @Override
-    public  VoltPhysicalTableIndexScan copyWithLimitOffset(RelTraitSet traitSet, RexNode offset, RexNode limit) {
+    public VoltPhysicalTableIndexScan copyWithLimitOffset(RelTraitSet traitSet, RexNode offset, RexNode limit) {
         return new VoltPhysicalTableIndexScan(
-                getCluster(),
-                traitSet,
-                getTable(),
-                getVoltTable(),
-                getProgram(),
-                getIndex(),
-                getAccessPath(),
-                offset,
-                limit,
-                getAggregateRelNode(),
-                getPreAggregateRowType(),
-                getPreAggregateProgram(),
-                getSplitCount(),
-                m_indexCollation);
+                getCluster(), traitSet, getTable(), getVoltTable(), getProgram(),
+                getIndex(), getAccessPath(), offset, limit, getAggregateRelNode(),
+                getPreAggregateRowType(), getPreAggregateProgram(), getSplitCount(), m_indexCollation);
     }
 
     @Override
     public VoltPhysicalTableIndexScan copyWithProgram(
             RelTraitSet traitSet, RexProgram newProgram, RexBuilder rexBuilder) {
         // Merge two programs program / m_program into a new merged program
-        final RexProgram  mergedProgram = RexProgramBuilder.mergePrograms(
-                newProgram,
-                m_program,
-                rexBuilder);
+        final RexProgram  mergedProgram = RexProgramBuilder.mergePrograms(newProgram, m_program, rexBuilder);
 
         // If a new program has a condition the condition needs to be added to the index's accessParh
         // as an OTHER expression to contribute to the Index Scan predicate.
@@ -345,11 +316,10 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
         }
 
         // Adjust the collation for a new program
-        final RelCollation newIndexCollation = VoltRexUtil.adjustCollationForProgram(rexBuilder, mergedProgram, m_indexCollation);
-
         return new VoltPhysicalTableIndexScan(getCluster(), traitSet, getTable(), getVoltTable(), mergedProgram,
                 getIndex(), getAccessPath(), getOffsetRexNode(), getLimitRexNode(), getAggregateRelNode(),
-                getPreAggregateRowType(), getPreAggregateProgram(), getSplitCount(), newIndexCollation);
+                getPreAggregateRowType(), getPreAggregateProgram(), getSplitCount(),
+                VoltRexUtil.adjustCollationForProgram(rexBuilder, mergedProgram, m_indexCollation));
     }
 
     @Override
@@ -357,12 +327,10 @@ public class VoltPhysicalTableIndexScan extends VoltPhysicalTableScan {
         // Need to create a Program for the inline aggregate because it will define
         // the output row type for the scan
         // Preserve the original program and row type
-        final RexProgram aggProgram = RexProgram.createIdentity(aggregate.getRowType());
-        final RelDataType preAggRowType = getRowType();
-        final RexProgram preAggProgram = getProgram();
-        return new VoltPhysicalTableIndexScan(getCluster(), traitSet, getTable(), getVoltTable(), aggProgram,
-                getIndex(), getAccessPath(), getOffsetRexNode(), getLimitRexNode(), aggregate, preAggRowType,
-                preAggProgram, getSplitCount(), m_indexCollation);
+        return new VoltPhysicalTableIndexScan(getCluster(), traitSet, getTable(), getVoltTable(),
+                RexProgram.createIdentity(aggregate.getRowType()),
+                getIndex(), getAccessPath(), getOffsetRexNode(), getLimitRexNode(), aggregate, getRowType(),
+                getProgram(), getSplitCount(), m_indexCollation);
     }
 
     @Override

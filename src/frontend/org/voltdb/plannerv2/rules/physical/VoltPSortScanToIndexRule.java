@@ -20,6 +20,7 @@ package org.voltdb.plannerv2.rules.physical;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.google_voltpatches.common.base.Preconditions;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
@@ -28,6 +29,7 @@ import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexProgram;
+import org.json_voltpatches.JSONException;
 import org.voltdb.catalog.Index;
 import org.voltdb.catalog.Table;
 import org.voltdb.planner.AccessPath;
@@ -40,15 +42,13 @@ import org.voltdb.types.SortDirectionType;
 
 public class VoltPSortScanToIndexRule extends RelOptRule {
 
-    public static final VoltPSortScanToIndexRule INSTANCE_1 =
+    public static final VoltPSortScanToIndexRule INSTANCE_SORT_SCAN =
             new VoltPSortScanToIndexRule(operand(VoltPhysicalSort.class,
-                operand(VoltPhysicalTableScan.class, none())),
-                    "SortScanToIndexRule_1");
+                operand(VoltPhysicalTableScan.class, none())), "SortScanToIndexRule_1");
 
-    public static final VoltPSortScanToIndexRule INSTANCE_2 =
+    public static final VoltPSortScanToIndexRule INSTANCE_SORT_CALC_SEQSCAN =
             new VoltPSortScanToIndexRule(operand(VoltPhysicalSort.class,
-                operand(VoltPhysicalCalc.class,
-                        operand(VoltPhysicalTableSequentialScan.class, none()))),
+                    operand(VoltPhysicalCalc.class, operand(VoltPhysicalTableSequentialScan.class, none()))),
                     "SortScanToIndexRule_2");
 
     private VoltPSortScanToIndexRule(RelOptRuleOperand operand, String desc) {
@@ -57,26 +57,26 @@ public class VoltPSortScanToIndexRule extends RelOptRule {
 
     @Override
     public boolean matches(RelOptRuleCall call) {
-        VoltPhysicalTableSequentialScan scan = (call.rels.length == 2) ?
+        final VoltPhysicalTableSequentialScan scan = (call.rels.length == 2) ?
                 call.rel(1) : call.rel(2);
-        VoltTable table = scan.getVoltTable();
-        assert(table != null);
+        final VoltTable table = scan.getVoltTable();
+        Preconditions.checkNotNull(table);
         return !table.getCatalogTable().getIndexes().isEmpty();
     }
 
 
     @Override
     public void onMatch(RelOptRuleCall call) {
-        VoltPhysicalSort sort = call.rel(0);
-        RelCollation origSortCollation = sort.getCollation();
-        assert(!RelCollations.EMPTY.equals(origSortCollation) &&
-                sort.fetch == null &&
-                sort.offset == null);
+        final VoltPhysicalSort sort = call.rel(0);
+        final RelCollation origSortCollation = sort.getCollation();
+        Preconditions.checkState(! RelCollations.EMPTY.equals(origSortCollation));
+        Preconditions.checkState(sort.fetch == null && sort.offset == null);
 
-        RelCollation scanSortCollation = null;
-        VoltPhysicalCalc calc = null;
-        VoltPhysicalTableSequentialScan scan = null;
+        final RelCollation scanSortCollation;
+        final VoltPhysicalCalc calc;
+        final VoltPhysicalTableSequentialScan scan;
         if (call.rels.length == 2) {
+            calc = null;
             scan = call.rel(1);
             scanSortCollation = origSortCollation;
         } else {
@@ -87,73 +87,57 @@ public class VoltPSortScanToIndexRule extends RelOptRule {
             }
             scan = call.rel(2);
         }
-        Table catTable = scan.getVoltTable().getCatalogTable();
+        final Table catTable = scan.getVoltTable().getCatalogTable();
 
-        RexBuilder builder = scan.getCluster().getRexBuilder();
-        RexProgram program = scan.getProgram();
-        assert(program != null);
+        final RexBuilder builder = scan.getCluster().getRexBuilder();
+        final RexProgram program = scan.getProgram();
+        Preconditions.checkNotNull(program);
         RelNode equivRel = null;
-        Map<RelNode, RelNode> equivMap = new HashMap<>();
+        final Map<RelNode, RelNode> equivMap = new HashMap<>();
 
         for (Index index : catTable.getIndexes()) {
-            if (!index.getPredicatejson().isEmpty()) {
-                // this is apartial index and it can not be considered here
-                continue;
-            }
-            RelCollation indexCollation =
-                    VoltRexUtil.createIndexCollation(index, catTable, builder, program);
-            SortDirectionType sortDirection =
-                    VoltRexUtil.areCollationsCompatible(scanSortCollation, indexCollation);
-            //@TODO Cutting corner here. Should probably use something similar to
-            // the SubPlanAssembler.WindowFunctionScoreboard
-            if (SortDirectionType.INVALID != sortDirection) {
-                AccessPath accessPath = new AccessPath(
-                        index,
-                        // With no index expression, the lookup type will be ignored and
-                        // the sort direction will determine the scan direction;
-                        IndexLookupType.EQ,
-                        sortDirection,
-                        true);
-                VoltPhysicalTableIndexScan indexScan = new VoltPhysicalTableIndexScan(
-                        scan.getCluster(),
-                        // Need to preserve sort collation trait
-                        scan.getTraitSet().replace(scanSortCollation),
-                        scan.getTable(),
-                        scan.getVoltTable(),
-                        scan.getProgram(),
-                        index,
-                        accessPath,
-                        scan.getLimitRexNode(),
-                        scan.getOffsetRexNode(),
-                        scan.getAggregateRelNode(),
-                        scan.getPreAggregateRowType(),
-                        scan.getPreAggregateProgram(),
-                        scan.getSplitCount(),
-                        indexCollation);
+            if (index.getPredicatejson().isEmpty()) { // TODO: a partial index is not considered
+                RelCollation indexCollation = null;
+                try {
+                    indexCollation = VoltRexUtil.createIndexCollation(index, catTable, builder, program);
+                } catch (JSONException e) { }
+                Preconditions.checkNotNull(indexCollation);
+                final SortDirectionType sortDirection = VoltRexUtil.areCollationsCompatible(
+                        scanSortCollation, indexCollation);
+                //@TODO Cutting corner here. Should probably use something similar to
+                // the SubPlanAssembler.WindowFunctionScoreboard
+                if (SortDirectionType.INVALID != sortDirection) {
+                    final AccessPath accessPath = new AccessPath(
+                            index,
+                            // With no index expression, the lookup type will be ignored and
+                            // the sort direction will determine the scan direction;
+                            IndexLookupType.EQ, sortDirection, true);
+                    final RelNode indexScan = new VoltPhysicalTableIndexScan(
+                            scan.getCluster(),
+                            // Need to preserve sort collation trait
+                            scan.getTraitSet().replace(scanSortCollation),
+                            scan.getTable(), scan.getVoltTable(), scan.getProgram(),
+                            index, accessPath, scan.getLimitRexNode(), scan.getOffsetRexNode(),
+                            scan.getAggregateRelNode(), scan.getPreAggregateRowType(), scan.getPreAggregateProgram(),
+                            scan.getSplitCount(), indexCollation);
 
-                RelNode result = null;
-                if (calc == null) {
-                    result = indexScan;
-                } else {
-                    // The new Calc collation must match the original Sort collation
-                    result = calc.copy(
-                            calc.getTraitSet().replace(origSortCollation),
-                            indexScan,
-                            calc.getProgram(),
-                            calc.getSplitCount());
-                }
-
-                if (equivRel == null) {
-                    equivRel = result;
-                } else {
-                    equivMap.put(result, sort);
+                    final RelNode result;
+                    if (calc == null) {
+                        result = indexScan;
+                    } else { // The new Calc collation must match the original Sort collation
+                        result = calc.copy(calc.getTraitSet().replace(origSortCollation),
+                                indexScan, calc.getProgram(), calc.getSplitCount());
+                    }
+                    if (equivRel == null) {
+                        equivRel = result;
+                    } else {
+                        equivMap.put(result, sort);
+                    }
                 }
             }
         }
         if (equivRel != null) {
             call.transformTo(equivRel, equivMap);
         }
-
     }
-
 }

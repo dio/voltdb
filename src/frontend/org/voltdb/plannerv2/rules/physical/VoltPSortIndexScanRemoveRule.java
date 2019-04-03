@@ -17,6 +17,7 @@
 
 package org.voltdb.plannerv2.rules.physical;
 
+import com.google_voltpatches.common.base.Preconditions;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
@@ -34,12 +35,12 @@ import org.voltdb.types.SortDirectionType;
 
 public class VoltPSortIndexScanRemoveRule extends RelOptRule {
 
-    public static final VoltPSortIndexScanRemoveRule INSTANCE_1 =
+    public static final VoltPSortIndexScanRemoveRule INSTANCE_SORT_INDEXSCAN =
             new VoltPSortIndexScanRemoveRule(operand(VoltPhysicalSort.class,
                     operand(VoltPhysicalTableIndexScan.class, none())),
                     "VoltDBPSortIndexScanRemoveRule_1");
 
-    public static final VoltPSortIndexScanRemoveRule INSTANCE_2 =
+    public static final VoltPSortIndexScanRemoveRule INSTANCE_SORT_CALC_INDEXSCAN =
             new VoltPSortIndexScanRemoveRule(operand(VoltPhysicalSort.class,
                     operand(VoltPhysicalCalc.class,
                             operand(VoltPhysicalTableIndexScan.class, none()))),
@@ -51,8 +52,8 @@ public class VoltPSortIndexScanRemoveRule extends RelOptRule {
 
     @Override
     public void onMatch(RelOptRuleCall call) {
-        VoltPhysicalSort sort = call.rel(0);
-        RelCollation origSortCollation = sort.getCollation();
+        final VoltPhysicalSort sort = call.rel(0);
+        final RelCollation origSortCollation = sort.getCollation();
 
         final RelCollation scanSortCollation;
         final VoltPhysicalCalc calc;
@@ -71,7 +72,7 @@ public class VoltPSortIndexScanRemoveRule extends RelOptRule {
         }
 
         final RexProgram program =  scan.getProgram();
-        assert(program != null);
+        Preconditions.checkNotNull(program);
 
         final RelCollation indexCollation = scan.getIndexCollation();
         final SortDirectionType sortDirection =
@@ -83,35 +84,21 @@ public class VoltPSortIndexScanRemoveRule extends RelOptRule {
             if (accessPath != null) {
                 accessPath.setSortDirection(sortDirection);
 
-                final VoltPhysicalTableIndexScan newScan = new VoltPhysicalTableIndexScan(
-                    scan.getCluster(),
-                    // Need to preserve the sort's collation
-                    scan.getTraitSet().replace(scanSortCollation),
-                    scan.getTable(),
-                    scan.getVoltTable(),
-                    scan.getProgram(),
-                    scan.getIndex(),
-                    accessPath,
-                    scan.getOffsetRexNode(),
-                    scan.getLimitRexNode(),
-                    scan.getAggregateRelNode(),
-                    scan.getPreAggregateRowType(),
-                    scan.getPreAggregateProgram(),
-                    scan.getSplitCount(),
-                    indexCollation);
-
+                final RelNode newScan = new VoltPhysicalTableIndexScan(
+                        scan.getCluster(),
+                        // Need to preserve the sort's collation
+                        scan.getTraitSet().replace(scanSortCollation),
+                        scan.getTable(), scan.getVoltTable(), scan.getProgram(), scan.getIndex(), accessPath,
+                        scan.getOffsetRexNode(), scan.getLimitRexNode(), scan.getAggregateRelNode(),
+                        scan.getPreAggregateRowType(), scan.getPreAggregateProgram(), scan.getSplitCount(),
+                        indexCollation);
                 final RelNode result;
                 if (calc == null) {
                     result = newScan;
-                } else {
-                    // The new Calc collation must match the original Sort collation
-                    result = calc.copy(
-                            calc.getTraitSet().replace(origSortCollation),
-                            newScan,
-                            calc.getProgram(),
-                            calc.getSplitCount());
+                } else { // The new Calc collation must match the original Sort collation
+                    result = calc.copy(calc.getTraitSet().replace(origSortCollation), newScan,
+                            calc.getProgram(), calc.getSplitCount());
                 }
-
                 call.transformTo(result);
             }
         }

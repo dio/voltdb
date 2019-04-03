@@ -100,7 +100,7 @@ public class VoltRelUtil {
 
     public static CompiledPlan calciteToVoltDBPlan(VoltPhysicalRel rel, CompiledPlan compiledPlan) {
 
-        RexConverter.resetParameterIndex();
+        RexConverter.PARAM_COUNTER.reset();
 
         AbstractPlanNode root = new SendPlanNode();
         root.addAndLinkChild(rel.toPlanNode());
