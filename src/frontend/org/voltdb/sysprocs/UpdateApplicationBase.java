@@ -127,7 +127,7 @@ public abstract class UpdateApplicationBase extends VoltNTSystemProcedure {
                 // Otherwise, deploymentString has the right contents, don't need to touch it
             }
             else if ("@UpdateClasses".equals(invocationName)) {
-                compilerLog.info("@UpdateClasses is invoked, modifying catalog classes.");
+                compilerLog.info("@UpdateClasses is invoked, modifying catalog classes. Current catalog version: " + context.catalogVersion);
                 // provided operationString is really a String with class patterns to delete,
                 // provided newCatalogJar is the jarfile with the new classes
                 if (operationBytes != null) {
@@ -551,6 +551,7 @@ public abstract class UpdateApplicationBase extends VoltNTSystemProcedure {
             return makeQuickResponse(ClientResponseImpl.GRACEFUL_FAILURE, errMsg);
         }
 
+        /*
         // only copy the current catalog when @UpdateCore could fail
         if (ccr.tablesThatMustBeEmpty.length != 0) {
             try {
@@ -564,6 +565,7 @@ public abstract class UpdateApplicationBase extends VoltNTSystemProcedure {
                 return makeQuickResponse(ClientResponseImpl.GRACEFUL_FAILURE, errMsg);
             }
         }
+        */
 
         // ENG-14511 on assertion failures in test environment, ensure removal of action blocker
         long genId = 0L;

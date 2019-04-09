@@ -409,14 +409,6 @@ public class UpdateCore extends VoltSystemProcedure {
             }
         }
 
-        try {
-            CatalogUtil.updateCatalogToZK(zk, expectedCatalogVersion + 1, genId,
-                    catalogBytes, catalogHash, deploymentBytes);
-        } catch (KeeperException | InterruptedException e) {
-            log.error("error writing catalog bytes on ZK during @UpdateCore");
-            throw e;
-        }
-
         // log the start of UpdateCore
         log.info("New catalog update from: " + VoltDB.instance().getCatalogContext().getCatalogLogString());
         log.info("To: catalog hash: " + Encoder.hexEncode(catalogHash).substring(0, 10) +
@@ -431,6 +423,7 @@ public class UpdateCore extends VoltSystemProcedure {
         }
         catch (VoltAbortException vae) {
             log.info("Catalog verification failed: " + vae.getMessage());
+            /*
             // revert the catalog node on ZK
             try {
                 // read the current catalog bytes
@@ -442,7 +435,16 @@ public class UpdateCore extends VoltSystemProcedure {
                 log.error("error read/write catalog bytes on zookeeper: " + e.getMessage());
                 throw e;
             }
+            */
             throw vae;
+        }
+
+        try {
+            CatalogUtil.updateCatalogToZK(zk, expectedCatalogVersion + 1, genId,
+                    catalogBytes, catalogHash, deploymentBytes);
+        } catch (KeeperException | InterruptedException e) {
+            log.error("error writing catalog bytes on ZK during @UpdateCore");
+            throw e;
         }
 
         performCatalogUpdateWork(
